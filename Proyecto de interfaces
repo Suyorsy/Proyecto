@@ -1,143 +1,109 @@
-#include <Wi-Fi.h>
+#include <WiFi.h>             // Librería para manejar la conexión WiFi.
+#include <PubSubClient.h>     // Librería para gestionar la comunicación con el protocolo MQTT.
 
-// Credenciales de la red Wi-Fi
-const char *ssid = "INFINITUM0A2D";      
-const char *password = "Mx5FS6Pn2s";
+// Configuración de la red WiFi.
+const char* ssid = "INFINITUM35E4";   // Nombre de la red WiFi (SSID).
+const char* password = "Bx5Ff6Pm2s"; // Contraseña de la red WiFi.
 
-// Definir los pines de los LEDs y el ADC
-const int ledPin1 = 26;
-const int ledPin2 = 27;
-const int adcPin = 34;
-const int controlPin = 25;
+// Configuración del servidor MQTT.
+const char* mqttServer = "broker.hivemq.com"; // Dirección del servidor MQTT.
+const int mqttPort = 1883;                   // Puerto para la conexión MQTT (estándar).
 
-// Crear un servidor web en el puerto 80
-WiFiServer server(80);
+// Tema MQTT utilizado para controlar el LED.
+const char* ledTopic = "osky"; // Tema al que el cliente MQTT se suscribirá para recibir mensajes.
 
-// Variables para almacenar el valor del ADC y su conversión a voltios
-int adcValue = 0;
-float voltajeAjustado = 0.0;
-const float UMBRAL_VOLTAGE = 1.0;
+// Pin donde está conectado el LED.
+const int ledPin = 26; // Número de pin GPIO al que está conectado el LED.
 
-// Dirección IP estática
-IPAddress staticIP(192, 168, 1, 184);
+// Objetos de conexión WiFi y cliente MQTT.
+WiFiClient wifiClient;          // Objeto para gestionar la conexión WiFi.
+PubSubClient mqttClient(wifiClient); // Cliente MQTT que utiliza la conexión WiFi.
 
-String htmlPage = R"rawliteral(
-HTTP/1.1 200 OK
-Content-type:text/html
+// Función para conectar a la red WiFi.
+void setupWifi() {
+  Serial.print("Conectando a la red WiFi"); // Mensaje inicial de conexión.
+  WiFi.begin(ssid, password);              // Intenta conectar con las credenciales proporcionadas.
 
-<!DOCTYPE html>
-<html>
-<head>
-  <title>ESP32 Controlador de LEDs y ADC</title>
-  <style>
-    body { text-align: center; font-family: Arial, sans-serif; }
-    button { background-color: slateblue; color: white; border: none; width: 80px; height: 40px; margin: 5px; }
-    button:hover { background-color: darkslateblue; }
-    h1 { color: slateblue; }
-  </style>
-  <script>
-    function controlLed(led, state) {
-      fetch(`/${led}/${state}`).then(() => location.reload());
-    }
-    function readADC() {
-      fetch(`/read_adc`).then(response => response.text()).then(data => {
-        document.getElementById("adcValue").innerText = data + " V";
-      });
-    }
-  </script>
-</head>
-<body>
-  <h1>ESP32 Control de LEDs y ADC</h1>
-  <p>LED 1:
-    <button onclick="controlLed('led1', 'on')">ON</button>
-    <button onclick="controlLed('led1', 'off')">OFF</button>
-  </p>
-  <p>LED 2:
-    <button onclick="controlLed('led2', 'on')">ON</button>
-    <button onclick="controlLed('led2', 'off')">OFF</button>
-  </p>
-  <p>
-    <button onclick="readADC()">Leer ADC</button>
-  </p>
-  <p>Voltaje actual: <span id="adcValue">%ADC_VALUE% V</span></p>
-</body>
-</html>
-)rawliteral";
-
-void setup() {
-  Serial.begin(115200);
-  pinMode(ledPin1, OUTPUT);
-  pinMode(ledPin2, OUTPUT);
-  pinMode(controlPin, INPUT);
-
-  digitalWrite(ledPin1, LOW);
-  digitalWrite(ledPin2, LOW);
-
-  // Conectar a WiFi con IP dinámica
-  WiFi.begin(ssid, password);
+  // Espera hasta que se establezca la conexión WiFi.
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+    delay(500);                            // Retardo para evitar saturación.
+    Serial.print(".");                     // Muestra progreso en el monitor serial.
   }
 
-  Serial.println("");
-  Serial.println("Conectado a WiFi. Dirección IP dinámica:");
-  Serial.println(WiFi.localIP());
-
-  // Mostrar IP estática en el monitor serial
-  Serial.print("Dirección IP Estática configurada: ");
-  Serial.println(staticIP);
-
-  server.begin();
+  Serial.println("\nConectado a la red WiFi"); // Mensaje cuando la conexión se establece.
 }
 
-void loop() {
-  WiFiClient client = server.available();
+// Función que se ejecuta cuando llega un mensaje MQTT.
+void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Mensaje recibido en el tema: "); 
+  Serial.println(topic); // Imprime el tema donde se recibió el mensaje.
 
-  if (client) {
-    Serial.println("Cliente conectado");
-    String currentLine = "";
-    String responseHtml = htmlPage;
-
-    while (client.connected()) {
-      if (client.available()) {
-        char c = client.read();
-        Serial.write(c);
-        currentLine += c;
-
-        if (c == '\n') {
-          if (currentLine.length() == 0) {
-            adcValue = analogRead(adcPin);
-            voltajeAjustado = (adcValue / 4095.0) * 5.0;
-            responseHtml.replace("%ADC_VALUE%", String(voltajeAjustado, 2));
-
-            client.print(responseHtml);
-            break;
-          } else {
-            currentLine = "";
-          }
-        }
-
-        if (currentLine.endsWith("GET /led1/on")) {
-          digitalWrite(ledPin1, HIGH);
-        }
-        if (currentLine.endsWith("GET /led1/off")) {
-          digitalWrite(ledPin1, LOW);
-        }
-        if (currentLine.endsWith("GET /led2/on")) {
-          digitalWrite(ledPin2, HIGH);
-        }
-        if (currentLine.endsWith("GET /led2/off")) {
-          digitalWrite(ledPin2, LOW);
-        }
-        if (currentLine.endsWith("GET /read_adc")) {
-          client.print(String(voltajeAjustado, 2));
-          break;
-        }
-      }
-    }
-
-    client.stop();
-    Serial.println("Cliente desconectado");
+  // Convierte el contenido del mensaje (payload) a un objeto String para facilitar su manejo.
+  String message;
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
   }
+
+  Serial.print("Contenido del mensaje: ");
+  Serial.println(message); // Muestra el contenido del mensaje recibido.
+
+  // Comprueba si el mensaje pertenece al tema configurado para controlar el LED.
+  if (String(topic) == ledTopic) {
+    if (message == "ON") {
+      digitalWrite(ledPin, HIGH);  // Enciende el LED.
+      Serial.println("LED encendido");
+    } else if (message == "OFF") {
+      digitalWrite(ledPin, LOW);   // Apaga el LED.
+      Serial.println("LED apagado");
+    } else {
+      Serial.println("Mensaje no reconocido"); // Indica un mensaje no válido.
+    }
+  }
+}
+
+// Función para reconectar al servidor MQTT si la conexión se pierde.
+void reconnect() {
+  // Reintenta la conexión hasta que sea exitosa.
+  while (!mqttClient.connected()) {
+    Serial.print("Conectando al servidor MQTT...");
+    // Conecta al servidor MQTT con un nombre único para el cliente.
+    if (mqttClient.connect("ESP32Client")) {
+      Serial.println("Conectado");
+
+      // Se suscribe al tema para recibir mensajes.
+      mqttClient.subscribe(ledTopic);
+      Serial.println("Suscrito al tema: osky");
+    } else {
+      // Si la conexión falla, muestra el error y reintenta en 5 segundos.
+      Serial.print("Fallo de conexión. Código de error: ");
+      Serial.print(mqttClient.state());
+      Serial.println(" Intentando reconectar en 5 segundos...");
+      delay(5000);
+    }
+  }
+}
+
+// Configuración inicial del dispositivo.
+void setup() {
+  Serial.begin(115200); // Inicia la comunicación serial a 115200 baudios para depuración.
+
+  pinMode(ledPin, OUTPUT); // Configura el pin del LED como salida.
+
+  setupWifi(); // Conecta a la red WiFi.
+
+  mqttClient.setServer(mqttServer, mqttPort); // Configura el servidor MQTT y el puerto.
+  mqttClient.setCallback(callback);          // Asigna la función callback para manejar mensajes.
+
+  reconnect(); // Realiza la conexión inicial al servidor MQTT.
+}
+
+// Bucle principal del programa.
+void loop() {
+  // Verifica que el cliente MQTT siga conectado, y si no, intenta reconectar.
+  if (!mqttClient.connected()) {
+    reconnect();
+  }
+
+  // Mantiene el cliente MQTT en funcionamiento y procesa mensajes entrantes.
+  mqttClient.loop();
 }
